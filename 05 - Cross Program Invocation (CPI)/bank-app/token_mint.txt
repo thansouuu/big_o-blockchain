@@ -1,0 +1,5 @@
+Creating token 3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj under program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+Address:  3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj
+Decimals:  9
+Creating account QeBAm2pxTLS5acKPq5st9tR7XmU6ihVj7SimkggoWxZ
+Recipient: QeBAm2pxTLS5acKPq5st9tR7XmU6ihVj7SimkggoWxZ
