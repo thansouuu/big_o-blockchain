@@ -65,7 +65,7 @@ impl<'info> Stake<'info>{
 
                 user_info.amount += amount;
             } else {
-                let pda_seeds: &[&[&[u8]]] = &[&[b"STAKING_VAULT", &[ctx.bumps.staking_vault]]];
+                let pda_seeds: &[&[&[u8]]] = &[&[STAKING_VAULT, &[ctx.bumps.staking_vault]]];
                 require!(
                     user_info.amount>=amount,
                     StakingAppError::Overflow

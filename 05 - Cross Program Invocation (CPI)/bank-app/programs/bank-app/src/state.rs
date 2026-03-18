@@ -13,3 +13,16 @@ pub struct BankInfo {
 pub struct UserReserve {
     pub deposited_amount: u64,
 }
+
+#[account]
+#[derive(Default)]
+pub struct TokenReserve{
+    pub token_mint:Pubkey,
+    pub token_share:u64,
+}
+
+#[account]
+#[derive(Default)]
+pub struct SolReserve{
+    pub token_share:u64,
+}

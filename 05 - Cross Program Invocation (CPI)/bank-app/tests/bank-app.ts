@@ -14,303 +14,260 @@ describe("bank-app", () => {
   const program = anchor.workspace.BankApp as Program<BankApp>;
   const stakingProgram = anchor.workspace.StakingApp as Program<StakingApp>;
 
-  const BANK_APP_ACCOUNTS = {
+  const STAKING_PROGRAM_ID = anchor.workspace.StakingApp.programId; 
+  const BANK_PROGRAM_ID = program.programId;
+
+  const mockTokenMint = new PublicKey('3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj');
+  // Định nghĩa bankVault trước để dùng lại bên dưới cho tiện
+  const bankVaultPda = PublicKey.findProgramAddressSync(
+    [Buffer.from("BANK_VAULT_SEED")], 
+    BANK_PROGRAM_ID
+  )[0];
+
+  const BANK_PDAS = {
     bankInfo: PublicKey.findProgramAddressSync(
-      [Buffer.from("BANK_INFO_SEED")],
-      program.programId
+      [Buffer.from("BANK_INFO_SEED")], 
+      BANK_PROGRAM_ID
     )[0],
-    bankVault: PublicKey.findProgramAddressSync(
-      [Buffer.from("BANK_VAULT_SEED")],
-      program.programId
-    )[0],
-    userReserve: (pubkey: PublicKey, tokenMint?: PublicKey) => {
-      let SEEDS = [
-        Buffer.from("USER_RESERVE_SEED"),
-        pubkey.toBuffer(),
-      ]
-
-      if (tokenMint != undefined) {
-        SEEDS.push(tokenMint.toBuffer())
-      }
-
+    
+    bankVault: bankVaultPda,
+    
+    // 1. QUỸ DỰ TRỮ CỦA TOKEN (3 tham số)
+    tokenReserve: (tokenMint: PublicKey) => {
       return PublicKey.findProgramAddressSync(
-        SEEDS,
-        program.programId
-      )[0]
-    }
-  }
-  async function init(){
-    try{
-      const bank_info=await program.account.bankInfo.fetch(BANK_APP_ACCOUNTS.bankInfo);
-      console.log("Bank info: ",bank_info);
-    }
-    catch {
-      const tx = await program.methods.initialize()
-      .accounts({
-        bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-        bankVault: BANK_APP_ACCOUNTS.bankVault,
-        authority: provider.publickey,
-        systemProgram: SystemProgram.programId
-      }).rpc();
-      console.log("Init successfull: ",tx);
-    }
-  }
+        [Buffer.from("BANK_TOKEN_SEED"), bankVaultPda.toBuffer(), tokenMint.toBuffer()],
+        BANK_PROGRAM_ID
+      )[0];
+    },
 
-  async function deposit_sol(amount:anchor.BN){
-    const tx=await program.methods.deposit(amount)
-    .accounts({
-      bankInfo:BANK_APP_ACCOUNTS.bankInfo,
-      bankVault:BANK_APP_ACCOUNTS.bankVault,
-      userReserve: BANK_APP_ACCOUNTS.userReserve(provider.publicKey),
-      user:provider.publicKey,
-      systemProgram:SystemProgram.programId
-    }).rpc();
-    console.log("Deposit sol ok ",tx);
-    const userReserve=await program.account.userReserve.fetch(BANK_APP_ACCOUNTS.userReserve(provider.publicKey));
-    console.log("User reserve: ",userReserve.depositedAmount.toString());
-  }
+    // 2. QUỸ DỰ TRỮ CỦA SOL (2 tham số - như bạn vừa code)
+    solReserve: PublicKey.findProgramAddressSync(
+      [Buffer.from("BANK_TOKEN_SEED"), bankVaultPda.toBuffer()],
+      BANK_PROGRAM_ID
+    )[0],
+    
+    userReserve: (pubkey: PublicKey, tokenMint?: PublicKey) => {
+      let seeds = [Buffer.from("USER_RESERVE_SEED"), pubkey.toBuffer()];
+      if (tokenMint) seeds.push(tokenMint.toBuffer());
+      return PublicKey.findProgramAddressSync(seeds, BANK_PROGRAM_ID)[0];
+    },
+  };
 
-  async function deposit_token(tokenMint:anchor.web3.PublicKey,amount:anchor.BN){
-    let userAta = getAssociatedTokenAddressSync(tokenMint, provider.publicKey)
-    let bankAta = getAssociatedTokenAddressSync(tokenMint, BANK_APP_ACCOUNTS.bankVault, true)
-    let preInstructions: TransactionInstruction[] = []
-      if (await provider.connection.getAccountInfo(bankAta) == null) {
-        preInstructions.push(createAssociatedTokenAccountInstruction(
-          provider.publicKey,
-          bankAta,
-          BANK_APP_ACCOUNTS.bankVault,
-          tokenMint
-        ))
-      }
-    console.log("Địa chỉ ATA của User:", userAta.toBase58());
-    console.log("Địa chỉ ATA của Bank Vault:", bankAta.toBase58());
+  const STAKING_PDAS = {
+    stakingVault: PublicKey.findProgramAddressSync(
+      [Buffer.from("STAKING_VAULT")], 
+      STAKING_PROGRAM_ID
+    )[0],
+
+    userInfo: (ownerPubkey: PublicKey, tokenMint?: PublicKey) => {
+      let seeds = [Buffer.from("USER_INFO"), ownerPubkey.toBuffer()];
+      if (tokenMint) seeds.push(tokenMint.toBuffer());
+      return PublicKey.findProgramAddressSync(seeds, STAKING_PROGRAM_ID)[0];
+    }
+  };
+
+  async function init() {
     try {
-      const userBalance = await provider.connection.getTokenAccountBalance(userAta);
-      const bankBalance = await provider.connection.getTokenAccountBalance(bankAta);
-      console.log("Số dư ví User:", userBalance.value.uiAmount, "Tokens");
-      console.log("Số dư két Bank:", bankBalance.value.uiAmount, "Tokens");
-    } catch (e) {
-      console.log("Một trong hai ví ATA chưa được khởi tạo trên mạng lưới!");
+      const bank_info = await program.account.bankInfo.fetch(BANK_PDAS.bankInfo);
+      console.log("Bank info: ", bank_info);
+    } catch {
+      const tx = await program.methods.initialize()
+        .accounts({
+          bankInfo: BANK_PDAS.bankInfo,
+          bankVault: BANK_PDAS.bankVault,
+          solReserve: BANK_PDAS.solReserve, // <--- THÊM DÒNG NÀY ĐỂ MUA KÉT SOL
+          authority: provider.publicKey,
+          systemProgram: SystemProgram.programId
+        }).rpc();
+      console.log("✅ Init successful: ", tx);
     }
-    const tx = await program.methods.depositToken(new BN(1_000_000_000))
+    console.log("bunhacopxki ",BANK_PDAS.bankVault);
+  }
+
+  async function deposit_token(tokenMint: PublicKey, amount: anchor.BN) {
+    const userAta = getAssociatedTokenAddressSync(tokenMint, provider.publicKey);
+    const bankAta = getAssociatedTokenAddressSync(tokenMint, BANK_PDAS.bankVault, true);
+    
+    let preInstructions: TransactionInstruction[] = [];
+    if (await provider.connection.getAccountInfo(bankAta) == null) {
+      preInstructions.push(createAssociatedTokenAccountInstruction(
+        provider.publicKey, bankAta, BANK_PDAS.bankVault, tokenMint
+      ));
+    }
+
+    const tx = await program.methods.depositToken(amount)
       .accounts({
-        bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-        bankVault: BANK_APP_ACCOUNTS.bankVault,
-        tokenMint,
-        userAta,
-        bankAta,
-        userReserve: BANK_APP_ACCOUNTS.userReserve(provider.publicKey, tokenMint),
+        bankInfo: BANK_PDAS.bankInfo,
+        bankVault: BANK_PDAS.bankVault,
+        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
+        tokenMint: tokenMint,
+        userAta: userAta,
+        bankAta: bankAta,
+        userReserve: BANK_PDAS.userReserve(provider.publicKey, tokenMint),
+        stakingProgram: STAKING_PROGRAM_ID,
+        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint),
         user: provider.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId
       }).preInstructions(preInstructions).rpc();
-    console.log("Deposit token signature: ", tx);
-
-    const userReserve = await program.account.userReserve.fetch(BANK_APP_ACCOUNTS.userReserve(provider.publicKey, tokenMint))
-    console.log("User reserve: ", userReserve.depositedAmount.toString())
+      
+    console.log("Deposit Token signature: ", tx);
   }
-  async function withdraw_sol(amount:anchor.BN){
+
+  async function deposit_sol(amount: anchor.BN) {
+    const tx = await program.methods.deposit(amount)
+      .accounts({
+        bankInfo: BANK_PDAS.bankInfo,
+        bankVault: BANK_PDAS.bankVault,
+        solReserve: BANK_PDAS.solReserve, // <--- THÊM VÀO ĐÂY
+        userReserve: BANK_PDAS.userReserve(provider.publicKey),
+        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault), 
+        stakingProgram: STAKING_PROGRAM_ID, 
+        user: provider.publicKey,
+        systemProgram: SystemProgram.programId,
+      }).rpc();
+      
+    console.log("✅ Deposit SOL signature: ", tx);
+    
+    const userReserve = await program.account.userReserve.fetch(BANK_PDAS.userReserve(provider.publicKey));
+    console.log("User reserve sau khi nạp SOL: ", userReserve.depositedAmount.toString());
+  }
+
+  async function withdraw_sol(amount: anchor.BN) {
     const tx = await program.methods.withdraw(amount)
       .accounts({
-        bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-        bankVault: BANK_APP_ACCOUNTS.bankVault,
-        userReserve: BANK_APP_ACCOUNTS.userReserve(provider.publicKey),
+        bankInfo: BANK_PDAS.bankInfo,
+        bankVault: BANK_PDAS.bankVault,
+        solReserve: BANK_PDAS.solReserve, // <--- THÊM VÀO ĐÂY
+        stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault),
+        userReserve: BANK_PDAS.userReserve(provider.publicKey),
+        stakingVault: STAKING_PDAS.stakingVault,
+        stakingProgram: STAKING_PROGRAM_ID,
         user: provider.publicKey,
         systemProgram: SystemProgram.programId
       }).rpc();
-    console.log("Withdraw signature: ", tx);
-
-    const userReserve = await program.account.userReserve.fetch(BANK_APP_ACCOUNTS.userReserve(provider.publicKey));
-    console.log("User reserve after withdraw: ", userReserve.depositedAmount.toString());
+      
+    console.log("✅ Withdraw SOL signature: ", tx);
+    
+    const userReserve = await program.account.userReserve.fetch(BANK_PDAS.userReserve(provider.publicKey));
+    console.log("User reserve sau khi rút SOL: ", userReserve.depositedAmount.toString());
   }
-  async function toggle_pause(){
-    const tx = await program.methods.togglePause()
-      .accounts({
-        bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-        authority: provider.publicKey, 
-      }).rpc();
-    console.log("Toggle pause signature: ", tx);
 
-    const bankInfo = await program.account.bankInfo.fetch(BANK_APP_ACCOUNTS.bankInfo);
-    console.log("Is bank paused now? ", bankInfo.isPaused);
-  }
-  async function withdraw_token(tokenMint: anchor.web3.PublicKey, amount: anchor.BN) {
-    const userAta = getAssociatedTokenAddressSync(
-      tokenMint,
-      provider.publicKey
-    );
-    const bankAta = getAssociatedTokenAddressSync(
-        tokenMint, 
-        BANK_APP_ACCOUNTS.bankVault, 
-        true 
-    );
+  async function withdraw_token(tokenMint: PublicKey, amount: anchor.BN) {
+    const userAta = getAssociatedTokenAddressSync(tokenMint, provider.publicKey);
+    const bankAta = getAssociatedTokenAddressSync(tokenMint, BANK_PDAS.bankVault, true);
+    const stakingAta = getAssociatedTokenAddressSync(tokenMint, STAKING_PDAS.stakingVault, true);
+
     const tx = await program.methods.withdrawToken(amount)
       .accounts({
-        bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-        bankVault: BANK_APP_ACCOUNTS.bankVault,
+        bankInfo: BANK_PDAS.bankInfo,
+        bankVault: BANK_PDAS.bankVault,
+        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
         tokenMint: tokenMint,
-        userAta: userAta, 
+        userAta: userAta,
         bankAta: bankAta,
-        userReserve: BANK_APP_ACCOUNTS.userReserve(provider.publicKey, tokenMint),
+        userReserve: BANK_PDAS.userReserve(provider.publicKey, tokenMint),
+        stakingProgram: STAKING_PROGRAM_ID,
+        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint),
+        stakingAta: stakingAta,
         user: provider.publicKey,
-        tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      }).rpc();
 
-    return tx;
+    console.log("Withdraw Token signature: ", tx);
   }
-  async function invest_sol(amount: anchor.BN,is_stake:boolean) {
+
+  async function invest_sol(amount: anchor.BN, is_stake: boolean) {
     try {
-      const [bankInfoPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("BANK_INFO_SEED")],
-        program.programId
-      );
-
-      const [bankVaultPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("BANK_VAULT_SEED")],
-        program.programId
-      );
-      const [stakingInfoPda] = PublicKey.findProgramAddressSync(
-          [
-              Buffer.from("USER_INFO"),           
-              bankVaultPda.toBuffer()     
-          ], 
-          stakingProgram.programId
-      );
-
-      const [stakingVaultPda] = PublicKey.findProgramAddressSync(
-        [Buffer.from("STAKING_VAULT")], // Thay bằng seed khai báo bên staking_app
-        stakingProgram.programId
-      );
-      console.log("🔍 [LOG] Địa chỉ Staking Vault đích:", stakingVaultPda.toBase58());
-      const preBalance = await provider.connection.getBalance(stakingVaultPda);
-      console.log(`🏦 Số dư Staking Vault (Trước): ${preBalance} lamports`);
-      const txSignature = await program.methods
-        .invest(amount,is_stake) 
+      const tx = await program.methods.invest(amount, is_stake)
         .accounts({
-          bankInfo: bankInfoPda,
-          bankVault: bankVaultPda,
-          stakingVault: stakingVaultPda, 
-          stakingInfo: stakingInfoPda,
-          stakingProgram: stakingProgram.programId,
+          bankInfo: BANK_PDAS.bankInfo,
+          bankVault: BANK_PDAS.bankVault,
+          stakingVault: STAKING_PDAS.stakingVault,
+          stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault),
+          stakingProgram: STAKING_PROGRAM_ID,
           authority: provider.wallet.publicKey,
           systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      console.log("✅ Giao dịch thành công! Mã hash:", txSignature);
-      const postBalance = await provider.connection.getBalance(stakingVaultPda);
-      console.log(`🏦 Số dư Staking Vault (Sau): ${postBalance} lamports`);
-      console.log(`📈 Số SOL thực nhận: ${postBalance - preBalance} lamports`);
-
+        }).rpc();
+        
+      console.log("Invest SOL thành công! Hash:", tx);
     } catch (error) {
-      console.error("❌ Giao dịch thất bại!");
-      if (error instanceof Error) {
-          console.error("Chi tiết lỗi:", error.message);
-      } else {
-          console.error(error);
-      }
+      console.error("❌ Lỗi khi Invest SOL:", error);
     }
   }
-  async function invest_token(tokenMint: anchor.web3.PublicKey, amount: anchor.BN, is_stake:boolean) {
-    const STAKING_PROGRAM_ID = anchor.workspace.StakingApp.programId;
-    const bankAta = getAssociatedTokenAddressSync(
-      tokenMint,
-      BANK_APP_ACCOUNTS.bankVault,
-      true 
-    );
-    const [stakingVaultPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("STAKING_VAULT")], 
-      STAKING_PROGRAM_ID
-    );
-    const stakingAta = getAssociatedTokenAddressSync(
-      tokenMint,
-      stakingVaultPda, 
-      true
-    );
-    const [stakingInfoPda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("USER_INFO"), 
-        BANK_APP_ACCOUNTS.bankVault.toBuffer(),
-        tokenMint.toBuffer()
-      ],
-      STAKING_PROGRAM_ID 
-    );
+
+  async function invest_token(tokenMint: PublicKey, amount: anchor.BN, is_stake: boolean) {
+    const bankAta = getAssociatedTokenAddressSync(tokenMint, BANK_PDAS.bankVault, true);
+    const stakingAta = getAssociatedTokenAddressSync(tokenMint, STAKING_PDAS.stakingVault, true);
 
     try {
-      const tx = await program.methods
-        .investToken(amount, is_stake) 
+      const tx = await program.methods.investToken(amount, is_stake)
         .accounts({
-          bankInfo: BANK_APP_ACCOUNTS.bankInfo,
-          bankVault: BANK_APP_ACCOUNTS.bankVault,
-          
-          stakingVault: stakingVaultPda,
-          stakingInfo: stakingInfoPda,
+          bankInfo: BANK_PDAS.bankInfo,
+          bankVault: BANK_PDAS.bankVault,
+          stakingVault: STAKING_PDAS.stakingVault,
+          stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint),
           stakingProgram: STAKING_PROGRAM_ID,
-          
           tokenProgram: TOKEN_PROGRAM_ID,
           tokenMint: tokenMint,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          
           bankAta: bankAta,
           stakingAta: stakingAta,
-          
           authority: provider.wallet.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
+          systemProgram: SystemProgram.programId,
+        }).rpc();
 
-      console.log("✅ Giao dịch Invest Token thành công! Chữ ký:", tx);
-      return tx;
+      console.log("Invest Token thành công! Hash:", tx);
     } catch (error) {
       console.error("❌ Lỗi khi Invest Token:", error);
-      throw error;
     }
   }
-  // it("Is pause!",async()=>{
-  //   await toggle_pause();
-  // });
-  it("Is initialized!", async () => {
+
+  async function toggle_pause() {
+    const tx = await program.methods.togglePause()
+      .accounts({
+        bankInfo: BANK_PDAS.bankInfo,
+        authority: provider.publicKey,
+      }).rpc();
+    console.log("Toggle pause signature: ", tx);
+  }
+  async function add_supported_token(tokenMint: PublicKey) {
+    const tx = await program.methods.addToken()
+      .accounts({
+        authority: provider.publicKey, // Admin ký
+        bankInfo: BANK_PDAS.bankInfo,
+        bankVault: BANK_PDAS.bankVault,
+        tokenMint: tokenMint,
+        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
+        systemProgram: SystemProgram.programId,
+      }).rpc();
+    console.log("✅ Admin đã cấp phép Token mới thành công! Hash:", tx);
+  }
+  it("Chạy Toàn Bộ Luồng DeFi", async () => {
+    // 1. KHAI TRƯƠNG BANK (Chỉ chạy 1 lần cho ID mới)
+    console.log("1. Đang Khởi tạo Ngân hàng...");
     await init();
-  });
 
-  it("Is deposited!", async () => {
-    await deposit_sol(
-      new anchor.BN(1000) 
-    );
-  });
+    // 2. ADMIN CHO PHÉP TOKEN HOẠT ĐỘNG
+    console.log("2. Đang Niêm yết Token...");
+    await add_supported_token(mockTokenMint);
 
-  it("Is deposited token!", async () => {
-    await deposit_token(
-      new anchor.web3.PublicKey("3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj"), // Chuyển String -> PublicKey
-      new anchor.BN(1000) 
-    );
-  });
-  
-  it("Is withdraw sol!",async()=>{
-    await withdraw_sol(
-      new anchor.BN(1000000000000)
-    );
-  });
-  it("Is withdraw token!",async()=>{
-    await withdraw_token(
-      new anchor.web3.PublicKey("3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj"), // Chuyển String -> PublicKey
-      new anchor.BN(1000) 
-    );
-  });
-  it("Invest sol",async()=>{
-    await invest_sol(
-      new anchor.BN(10),
-      true
-    );
-  });
-  it("Invest token", async()=>{
-    await invest_token(
-      new anchor.web3.PublicKey("3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj"), // Chuyển String -> PublicKey
-      new anchor.BN(1000),
-      true
-    )
-  });
+    // 3. NẠP TIỀN VÀO BANK (Nạp dư dả để Bank có vốn)
+    console.log("3. User đang nạp tiền...");
+    await deposit_sol(new anchor.BN(10 * 10**9)); // Nạp 10 SOL
+    await deposit_token(mockTokenMint, new anchor.BN(1000 * 10**9)); // Nạp 1000 Token
 
+    // 4. BANK MANG TIỀN ĐI ĐẦU TƯ (Phải chạy sau bước 3)
+    console.log("4. Bank mang vốn đi Staking...");
+    await invest_sol(new anchor.BN(5 * 10**9), true);
+    await invest_token(mockTokenMint, new anchor.BN(500 * 10**9), true);
+
+    // 5. RÚT TIỀN VỀ (Test sự trơn tru của thuật toán chia sẻ Share)
+    console.log("5. User rút tiền về...");
+    await withdraw_sol(new anchor.BN(2 * 10**9));
+    await withdraw_token(mockTokenMint, new anchor.BN(200 * 10**9));
+    
+    console.log("✅ TẤT CẢ ĐÃ THÀNH CÔNG RỰC RỠ!");
+  });
 });

@@ -5,14 +5,29 @@ use anchor_spl::{
 };
 
 use crate::{
-    constant::{BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
+    constant::{BANK_TOKEN_SEED,BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
     error::BankAppError,
-    state::{BankInfo, UserReserve},
+    state::{BankInfo, UserReserve,TokenReserve},
     transfer_helper::token_transfer_from_user,
+};
+use staking_app::{
+    constant::{USER_INFO, STAKING_APR, SECOND_PER_YEAR},
+    state::UserInfo,
+    program::StakingApp,
 };
 
 #[derive(Accounts)]
 pub struct DepositToken<'info> {
+    #[account(
+        mut,
+        seeds = [
+            BANK_TOKEN_SEED,
+            bank_vault.key().as_ref(),
+            token_mint.key().as_ref()
+        ],
+        bump,
+    )]
+    pub token_reserve: Box<Account<'info, TokenReserve>>,
     #[account(
         seeds = [BANK_INFO_SEED],
         bump
@@ -57,7 +72,18 @@ pub struct DepositToken<'info> {
         space = 8 + std::mem::size_of::<UserReserve>(),
     )]
     pub user_reserve: Box<Account<'info, UserReserve>>,
-
+    
+    pub staking_program: Program<'info,StakingApp>,
+    #[account(
+        seeds=[
+            USER_INFO,
+            bank_vault.key().as_ref(),
+            token_mint.key().as_ref()
+        ],
+        bump,
+        seeds::program = staking_program.key(),
+    )]
+    pub staking_info:Box<Account<'info,UserInfo>>,
     #[account(mut)]
     pub user: Signer<'info>,
     pub token_program: Program<'info, Token>,
@@ -71,8 +97,29 @@ impl<'info> DepositToken<'info> {
         if bank_info.is_paused {
             return Err(BankAppError::BankAppPaused.into());
         }
-
+        
         let user_reserve = &mut ctx.accounts.user_reserve;
+        let staking_info=&ctx.accounts.staking_info;
+        let token_reserve = &mut ctx.accounts.token_reserve;
+        let token_share=token_reserve.token_share;
+
+        let new_share= if token_share==0 {
+            deposit_amount
+        }
+        else {
+            let current_time: u64 = Clock::get()?.unix_timestamp.try_into().unwrap();
+            let pass_time = if staking_info.last_update_time == 0 {
+                0
+            } else {
+                current_time - staking_info.last_update_time
+            };
+            let lai=staking_info.amount * STAKING_APR * pass_time / 100 / SECOND_PER_YEAR;
+            let total_asset=ctx.accounts.bank_ata.amount+staking_info.amount+lai;
+            token_share*deposit_amount/total_asset
+        };
+        user_reserve.deposited_amount+=new_share;
+        token_reserve.token_share+=new_share;
+        
 
         token_transfer_from_user(
             ctx.accounts.user_ata.to_account_info(),
@@ -81,9 +128,6 @@ impl<'info> DepositToken<'info> {
             &ctx.accounts.token_program,
             deposit_amount,
         )?;
-
-        user_reserve.deposited_amount += deposit_amount;
-
         Ok(())
     }
 }

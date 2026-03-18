@@ -8,6 +8,7 @@ use crate::{
     constant::{BANK_INFO_SEED, BANK_VAULT_SEED},
     error::BankAppError,
     state::BankInfo,
+    transfer_helper::{cpi_staking_interaction_token},
 };
 use staking_app::{cpi, program::StakingApp};
 
@@ -67,28 +68,24 @@ impl<'info> InvestToken<'info> {
         if ctx.accounts.bank_info.is_paused {
             return Err(BankAppError::BankAppPaused.into());
         }
+        let bump = ctx.accounts.bank_info.bump; 
+        let invest_vault_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[bump]]];
 
-        let invest_vault_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[ctx.accounts.bank_info.bump]]];
-
-        cpi::staking_token(
-            CpiContext::new_with_signer(
-                ctx.accounts.staking_program.to_account_info(),
-                cpi::accounts::StakeToken{
-                    staking_vault:ctx.accounts.staking_vault.to_account_info(),
-                    token_mint:ctx.accounts.token_mint.to_account_info(),
-                    user_ata:ctx.accounts.bank_ata.to_account_info(),
-                    staking_ata:ctx.accounts.staking_ata.to_account_info(),
-                    user_info:ctx.accounts.staking_info.to_account_info(),
-                    user:ctx.accounts.bank_vault.to_account_info(),
-                    payer:ctx.accounts.authority.to_account_info(),
-                    token_program:ctx.accounts.token_program.to_account_info(),
-                    system_program:ctx.accounts.system_program.to_account_info(),
-                    associated_token_program: ctx.accounts.associated_token_program.to_account_info(),
-                },
-                invest_vault_seeds,
-            ),
+        cpi_staking_interaction_token(
+            ctx.accounts.staking_program.to_account_info(),
+            ctx.accounts.staking_vault.to_account_info(),
+            ctx.accounts.token_mint.to_account_info(),
+            ctx.accounts.bank_ata.to_account_info(),
+            ctx.accounts.staking_ata.to_account_info(),
+            ctx.accounts.staking_info.to_account_info(),
+            ctx.accounts.bank_vault.to_account_info(),
+            ctx.accounts.authority.to_account_info(), // Payer là Admin
+            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.associated_token_program.to_account_info(),
             amount,
             is_stake,
+            invest_vault_seeds,
         )?;
 
         Ok(())

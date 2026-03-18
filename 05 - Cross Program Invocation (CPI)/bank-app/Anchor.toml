@@ -5,8 +5,8 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-bank_app = "EABe2CcXRWhvB2T6rd6Gz4d2kMpfFGVQ1ic66tJWnqAP"
-staking_app = "9orfK5nd89RbNawmDifJsmmATgPR6Wi6C1sRbjCWUQ7Z"
+bank_app = "A85WFhF5Y7iw5Ry2md2M11MFGtKWGw3hVgNDkjDNGEnt"
+staking_app = "6dHk4wFxpKGP7orzUqCUS6QA5KX12vpJzM6NbGB7MNRD"
 
 [programs.localnet]
 bank_app = "3q57ftWH75aKfxoNnV6Lu1n8LhV73xxKHAxPapL6Jvh7"

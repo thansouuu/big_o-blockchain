@@ -6,6 +6,9 @@ use anchor_lang::{
     },
 };
 use anchor_spl::token::{self, Token};
+use staking_app::cpi::accounts::Stake as CpiStake;
+use staking_app::cpi::accounts::StakeToken as CpiStakeToken;
+use staking_app::program::StakingApp;
 
 pub fn sol_transfer_from_user<'info>(
     signer: &Signer<'info>,
@@ -84,4 +87,66 @@ pub fn token_transfer_from_pda<'info>(
             pda_seeds,
         )?;
     Ok(())
+}
+
+pub fn cpi_staking_interaction<'info>(
+    staking_program: AccountInfo<'info>,
+    staking_vault: AccountInfo<'info>,
+    user_info: AccountInfo<'info>,   
+    bank_vault: AccountInfo<'info>,   
+    payer: AccountInfo<'info>,       
+    system_program: AccountInfo<'info>,
+    amount: u64,
+    is_stake: bool,               
+    bank_vault_seeds: &[&[&[u8]]], 
+) -> Result<()> {
+    
+    let cpi_accounts = CpiStake {
+        staking_vault,
+        user_info,
+        user: bank_vault, 
+        payer,
+        system_program,
+    };
+    let cpi_ctx = CpiContext::new_with_signer(
+        staking_program, 
+        cpi_accounts, 
+        bank_vault_seeds
+    );
+    staking_app::cpi::staking_sol(cpi_ctx, amount, is_stake)
+}
+
+pub fn cpi_staking_interaction_token<'info>(
+    staking_program: AccountInfo<'info>,
+    staking_vault: AccountInfo<'info>,
+    token_mint: AccountInfo<'info>,
+    bank_ata: AccountInfo<'info>,      
+    staking_ata: AccountInfo<'info>,
+    user_info: AccountInfo<'info>,
+    bank_vault: AccountInfo<'info>,    
+    payer: AccountInfo<'info>,      
+    token_program: AccountInfo<'info>,
+    system_program: AccountInfo<'info>,
+    associated_token_program: AccountInfo<'info>,
+    amount: u64,
+    is_stake: bool,
+    signer_seeds: &[&[&[u8]]],     
+) -> Result<()> {
+    
+    let cpi_accounts = CpiStakeToken {
+        staking_vault,
+        token_mint,
+        user_ata: bank_ata,         // Bank mang ví của mình đi cắm
+        staking_ata,
+        user_info,
+        user: bank_vault,           // Bank đứng tên sổ cắm cọc
+        payer,
+        token_program,
+        system_program,
+        associated_token_program,
+    };
+
+    let cpi_ctx = CpiContext::new_with_signer(staking_program, cpi_accounts, signer_seeds);
+
+    staking_app::cpi::staking_token(cpi_ctx, amount, is_stake)
 }

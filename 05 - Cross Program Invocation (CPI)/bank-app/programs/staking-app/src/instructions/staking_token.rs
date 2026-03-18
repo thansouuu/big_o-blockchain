@@ -33,7 +33,8 @@ pub struct StakeToken<'info> {
     pub user_ata:Box<InterfaceAccount<'info,TokenAccount>>,
     
     #[account(
-        mut,
+        init_if_needed,          
+        payer = payer,
         associated_token::mint=token_mint,
         associated_token::authority=staking_vault
     )]

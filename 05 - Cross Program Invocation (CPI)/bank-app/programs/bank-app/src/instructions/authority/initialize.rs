@@ -1,8 +1,8 @@
 use anchor_lang::{prelude::*, system_program};
 
 use crate::{
-    constant::{BANK_INFO_SEED, BANK_VAULT_SEED},
-    state::BankInfo,
+    constant::{BANK_TOKEN_SEED,BANK_INFO_SEED, BANK_VAULT_SEED},
+    state::{BankInfo,SolReserve},
 };
 
 #[derive(Accounts)]
@@ -26,6 +26,17 @@ pub struct Initialize<'info> {
         owner = system_program::ID
     )]
     pub bank_vault: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = authority,
+        seeds = [
+            BANK_TOKEN_SEED,
+            bank_vault.key().as_ref(), 
+        ],
+        bump,
+        space = 8 + std::mem::size_of::<SolReserve>() 
+    )]
+    pub sol_reserve: Box<Account<'info, SolReserve>>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -39,7 +50,7 @@ impl<'info> Initialize<'info> {
         bank_info.authority = ctx.accounts.authority.key();
         bank_info.is_paused = false;
         bank_info.bump = ctx.bumps.bank_vault;
-
+        ctx.accounts.sol_reserve.token_share=0;
         msg!("bank app initialized!");
         Ok(())
     }
