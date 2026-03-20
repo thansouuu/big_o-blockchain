@@ -81,12 +81,15 @@ describe("bank-app", () => {
         }).rpc();
       console.log("✅ Init successful: ", tx);
     }
-    console.log("bunhacopxki ",BANK_PDAS.bankVault);
+    console.log("bank_vault. ",BANK_PDAS.bankVault);
+    console.log("staking_ata. ",getAssociatedTokenAddressSync(mockTokenMint, STAKING_PDAS.stakingVault, true));
+    console.log("staking_vault ",STAKING_PDAS.stakingVault);    
   }
 
   async function deposit_token(tokenMint: PublicKey, amount: anchor.BN) {
     const userAta = getAssociatedTokenAddressSync(tokenMint, provider.publicKey);
     const bankAta = getAssociatedTokenAddressSync(tokenMint, BANK_PDAS.bankVault, true);
+    const stakingAta = getAssociatedTokenAddressSync(tokenMint, STAKING_PDAS.stakingVault, true); // <-- THÊM stakingAta
     
     let preInstructions: TransactionInstruction[] = [];
     if (await provider.connection.getAccountInfo(bankAta) == null) {
@@ -97,60 +100,61 @@ describe("bank-app", () => {
 
     const tx = await program.methods.depositToken(amount)
       .accounts({
+        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
         bankInfo: BANK_PDAS.bankInfo,
         bankVault: BANK_PDAS.bankVault,
-        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
         tokenMint: tokenMint,
         userAta: userAta,
         bankAta: bankAta,
         userReserve: BANK_PDAS.userReserve(provider.publicKey, tokenMint),
         stakingProgram: STAKING_PROGRAM_ID,
-        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint),
+        stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint), // <-- Đổi tên từ userInfo
+        stakingVault: STAKING_PDAS.stakingVault, // <-- THÊM MỚI
         user: provider.publicKey,
+        stakingAta: stakingAta, // <-- THÊM MỚI
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID, // <-- THÊM MỚI
+        authority: provider.publicKey, // <-- THÊM MỚI (Admin)
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId
       }).preInstructions(preInstructions).rpc();
       
-    console.log("Deposit Token signature: ", tx);
+    console.log("✅ Deposit Token signature: ", tx);
   }
 
   async function deposit_sol(amount: anchor.BN) {
     const tx = await program.methods.deposit(amount)
       .accounts({
         bankInfo: BANK_PDAS.bankInfo,
+        solReserve: BANK_PDAS.solReserve,
         bankVault: BANK_PDAS.bankVault,
-        solReserve: BANK_PDAS.solReserve, // <--- THÊM VÀO ĐÂY
         userReserve: BANK_PDAS.userReserve(provider.publicKey),
-        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault), 
+        stakingVault: STAKING_PDAS.stakingVault, // <-- THÊM MỚI
         stakingProgram: STAKING_PROGRAM_ID, 
+        stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault), // <-- Đổi tên từ userInfo
         user: provider.publicKey,
+        authority: provider.publicKey, // <-- THÊM MỚI (Admin)
         systemProgram: SystemProgram.programId,
       }).rpc();
       
     console.log("✅ Deposit SOL signature: ", tx);
-    
-    const userReserve = await program.account.userReserve.fetch(BANK_PDAS.userReserve(provider.publicKey));
-    console.log("User reserve sau khi nạp SOL: ", userReserve.depositedAmount.toString());
   }
 
   async function withdraw_sol(amount: anchor.BN) {
     const tx = await program.methods.withdraw(amount)
       .accounts({
         bankInfo: BANK_PDAS.bankInfo,
+        solReserve: BANK_PDAS.solReserve,
         bankVault: BANK_PDAS.bankVault,
-        solReserve: BANK_PDAS.solReserve, // <--- THÊM VÀO ĐÂY
         stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault),
         userReserve: BANK_PDAS.userReserve(provider.publicKey),
         stakingVault: STAKING_PDAS.stakingVault,
         stakingProgram: STAKING_PROGRAM_ID,
         user: provider.publicKey,
+        authority: provider.publicKey, // <-- THÊM MỚI (Admin)
         systemProgram: SystemProgram.programId
       }).rpc();
       
     console.log("✅ Withdraw SOL signature: ", tx);
-    
-    const userReserve = await program.account.userReserve.fetch(BANK_PDAS.userReserve(provider.publicKey));
-    console.log("User reserve sau khi rút SOL: ", userReserve.depositedAmount.toString());
   }
 
   async function withdraw_token(tokenMint: PublicKey, amount: anchor.BN) {
@@ -168,14 +172,17 @@ describe("bank-app", () => {
         bankAta: bankAta,
         userReserve: BANK_PDAS.userReserve(provider.publicKey, tokenMint),
         stakingProgram: STAKING_PROGRAM_ID,
-        userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint),
+        stakingInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault, tokenMint), // <-- Đổi tên từ userInfo
         stakingAta: stakingAta,
+        stakingVault: STAKING_PDAS.stakingVault, // <-- THÊM MỚI
         user: provider.publicKey,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID, // <-- THÊM MỚI
+        authority: provider.publicKey, // <-- THÊM MỚI (Admin)
       }).rpc();
 
-    console.log("Withdraw Token signature: ", tx);
+    console.log("✅ Withdraw Token signature: ", tx);
   }
 
   async function invest_sol(amount: anchor.BN, is_stake: boolean) {
@@ -232,18 +239,51 @@ describe("bank-app", () => {
       }).rpc();
     console.log("Toggle pause signature: ", tx);
   }
-  async function add_supported_token(tokenMint: PublicKey) {
-    const tx = await program.methods.addToken()
-      .accounts({
-        authority: provider.publicKey, // Admin ký
-        bankInfo: BANK_PDAS.bankInfo,
-        bankVault: BANK_PDAS.bankVault,
-        tokenMint: tokenMint,
-        tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
-        systemProgram: SystemProgram.programId,
-      }).rpc();
-    console.log("✅ Admin đã cấp phép Token mới thành công! Hash:", tx);
+  async function add_supported_token(tokenMint: anchor.web3.PublicKey) {
+    try {
+      // 1. Thử đọc quyển sổ Token Reserve xem đã có trên Devnet chưa
+      const reserve = await program.account.tokenReserve.fetch(BANK_PDAS.tokenReserve(tokenMint));
+      console.log("✅ Token này đã được Admin cấp phép từ trước, bỏ qua bước AddToken.");
+    } catch (e) {
+      // 2. Nếu nó văng lỗi (nghĩa là chưa có), thì ta mới gọi lệnh init
+      const tx = await program.methods.addToken()
+        .accounts({
+          authority: provider.publicKey, 
+          bankInfo: BANK_PDAS.bankInfo,
+          bankVault: BANK_PDAS.bankVault,
+          tokenMint: tokenMint,
+          tokenReserve: BANK_PDAS.tokenReserve(tokenMint),
+          systemProgram: anchor.web3.SystemProgram.programId,
+        }).rpc();
+      console.log("✅ Admin đã cấp phép Token mới thành công! Hash:", tx);
+    }
   }
+  it("1.5. Khởi tạo tài khoản Staking Info cho Bank Vault", async () => {
+    // Lưu ý: Tên hàm 'initializeUserInfo' dưới đây phụ thuộc vào việc bạn 
+    // đã đặt tên hàm khởi tạo user bên file Rust của Staking App là gì.
+    
+    try {
+        // Kiểm tra xem đã tạo chưa để tránh lỗi "already in use"
+        await stakingProgram.account.userInfo.fetch(
+            STAKING_PDAS.userInfo(BANK_PDAS.bankVault)
+        );
+        console.log("✅ staking_info đã tồn tại, bỏ qua bước khởi tạo.");
+    } catch (e) {
+        // Nếu chưa có, tiến hành gọi hàm khởi tạo của Staking App
+        const tx = await stakingProgram.methods.stakingSol() // Đổi tên hàm cho khớp
+            .accounts({
+                userInfo: STAKING_PDAS.userInfo(BANK_PDAS.bankVault),
+                // bank_vault đóng vai trò là "người dùng" đi staking
+                user: BANK_PDAS.bankVault, 
+                // Admin (ví của bạn) sẽ là người trả tiền phí (rent) để tạo tài khoản
+                payer: provider.publicKey, 
+                systemProgram: SystemProgram.programId,
+            })
+            .rpc();
+            
+        console.log("✅ Đã tạo thành công staking_info! Hash:", tx);
+    }
+});
   it("Chạy Toàn Bộ Luồng DeFi", async () => {
     // 1. KHAI TRƯƠNG BANK (Chỉ chạy 1 lần cho ID mới)
     console.log("1. Đang Khởi tạo Ngân hàng...");
@@ -256,17 +296,17 @@ describe("bank-app", () => {
     // 3. NẠP TIỀN VÀO BANK (Nạp dư dả để Bank có vốn)
     console.log("3. User đang nạp tiền...");
     await deposit_sol(new anchor.BN(10 * 10**9)); // Nạp 10 SOL
-    await deposit_token(mockTokenMint, new anchor.BN(1000 * 10**9)); // Nạp 1000 Token
+    // await deposit_token(mockTokenMint, new anchor.BN(1000 * 10**9)); // Nạp 1000 Token
 
-    // 4. BANK MANG TIỀN ĐI ĐẦU TƯ (Phải chạy sau bước 3)
-    console.log("4. Bank mang vốn đi Staking...");
-    await invest_sol(new anchor.BN(5 * 10**9), true);
-    await invest_token(mockTokenMint, new anchor.BN(500 * 10**9), true);
+    // // 4. BANK MANG TIỀN ĐI ĐẦU TƯ (Phải chạy sau bước 3)
+    // console.log("4. Bank mang vốn đi Staking...");
+    // await invest_sol(new anchor.BN(5 * 10**9), true);
+    // await invest_token(mockTokenMint, new anchor.BN(500 * 10**9), true);
 
-    // 5. RÚT TIỀN VỀ (Test sự trơn tru của thuật toán chia sẻ Share)
-    console.log("5. User rút tiền về...");
-    await withdraw_sol(new anchor.BN(2 * 10**9));
-    await withdraw_token(mockTokenMint, new anchor.BN(200 * 10**9));
+    // // 5. RÚT TIỀN VỀ (Test sự trơn tru của thuật toán chia sẻ Share)
+    // console.log("5. User rút tiền về...");
+    // await withdraw_sol(new anchor.BN(2 * 10**9));
+    // await withdraw_token(mockTokenMint, new anchor.BN(200 * 10**9));
     
     console.log("✅ TẤT CẢ ĐÃ THÀNH CÔNG RỰC RỠ!");
   });

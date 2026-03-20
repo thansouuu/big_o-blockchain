@@ -11,7 +11,7 @@ pub struct BankInfo {
 #[account]
 #[derive(Default)]
 pub struct UserReserve {
-    pub deposited_amount: u64,
+    pub token_share: u64,
 }
 
 #[account]

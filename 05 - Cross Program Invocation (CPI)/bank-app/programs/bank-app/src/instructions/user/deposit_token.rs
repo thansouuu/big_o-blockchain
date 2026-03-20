@@ -1,5 +1,6 @@
 use anchor_lang::{prelude::*, system_program};
 use anchor_spl::{
+    associated_token::AssociatedToken,
     token::Token,
     token_interface::{Mint, TokenAccount},
 };
@@ -8,7 +9,7 @@ use crate::{
     constant::{BANK_TOKEN_SEED,BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
     error::BankAppError,
     state::{BankInfo, UserReserve,TokenReserve},
-    transfer_helper::token_transfer_from_user,
+    transfer_helper::{token_transfer_from_user,cpi_staking_interaction_token}
 };
 use staking_app::{
     constant::{USER_INFO, STAKING_APR, SECOND_PER_YEAR},
@@ -84,8 +85,22 @@ pub struct DepositToken<'info> {
         seeds::program = staking_program.key(),
     )]
     pub staking_info:Box<Account<'info,UserInfo>>,
+    ///CHECK space=0
+    #[account(mut)]
+    pub staking_vault:UncheckedAccount<'info>,
     #[account(mut)]
     pub user: Signer<'info>,
+    #[account(
+        init_if_needed,
+        payer = authority,
+        associated_token::mint=token_mint,
+        associated_token::authority=staking_vault
+    )]
+    pub staking_ata:Box<InterfaceAccount<'info,TokenAccount>>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    
+    #[account(mut, address = bank_info.authority)]
+    pub authority: Signer<'info>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
@@ -101,24 +116,46 @@ impl<'info> DepositToken<'info> {
         let user_reserve = &mut ctx.accounts.user_reserve;
         let staking_info=&ctx.accounts.staking_info;
         let token_reserve = &mut ctx.accounts.token_reserve;
-        let token_share=token_reserve.token_share;
+        let token_share=&mut token_reserve.token_share;
+        let bump = ctx.accounts.bank_info.bump; 
+        let invest_vault_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[bump]]];
 
-        let new_share= if token_share==0 {
+        let new_share= if (*token_share)==0 {
             deposit_amount
         }
         else {
-            let current_time: u64 = Clock::get()?.unix_timestamp.try_into().unwrap();
-            let pass_time = if staking_info.last_update_time == 0 {
-                0
-            } else {
-                current_time - staking_info.last_update_time
-            };
-            let lai=staking_info.amount * STAKING_APR * pass_time / 100 / SECOND_PER_YEAR;
-            let total_asset=ctx.accounts.bank_ata.amount+staking_info.amount+lai;
-            token_share*deposit_amount/total_asset
+            
+            cpi_staking_interaction_token(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),
+                ctx.accounts.token_mint.to_account_info(),
+                ctx.accounts.bank_ata.to_account_info(),
+                ctx.accounts.staking_ata.to_account_info(),
+                ctx.accounts.staking_info.to_account_info(),
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(), // Payer là Admin
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.associated_token_program.to_account_info(),
+                ctx.accounts.bank_ata.amount,
+                true,
+                invest_vault_seeds,
+            )?;
+            let total_asset=staking_info.amount;
+            // token_share*deposit_amount/total_asset
+            let result_u128 = (*token_share as u128)
+                .checked_mul(deposit_amount as u128)
+                .ok_or(BankAppError::ErrorMath)? 
+                .checked_div(total_asset as u128)
+                .ok_or(BankAppError::DivideByZero)?;
+            u64::try_from(result_u128).map_err(|_| BankAppError::ErrorMath)?
         };
-        user_reserve.deposited_amount+=new_share;
-        token_reserve.token_share+=new_share;
+        *token_share = token_share
+            .checked_add(new_share)
+            .ok_or(BankAppError::ErrorMath)?;
+        user_reserve.token_share = user_reserve.token_share
+            .checked_add(new_share)
+            .ok_or(BankAppError::ErrorMath)?;
         
 
         token_transfer_from_user(
@@ -128,6 +165,22 @@ impl<'info> DepositToken<'info> {
             &ctx.accounts.token_program,
             deposit_amount,
         )?;
+        cpi_staking_interaction_token(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),
+                ctx.accounts.token_mint.to_account_info(),
+                ctx.accounts.bank_ata.to_account_info(),
+                ctx.accounts.staking_ata.to_account_info(),
+                ctx.accounts.staking_info.to_account_info(),
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(), // Payer là Admin
+                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.associated_token_program.to_account_info(),
+                ctx.accounts.bank_ata.amount,
+                true,
+                invest_vault_seeds,
+            )?;
         Ok(())
     }
 }

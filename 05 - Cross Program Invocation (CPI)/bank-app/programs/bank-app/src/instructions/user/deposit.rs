@@ -4,7 +4,7 @@ use crate::{
     constant::{BANK_TOKEN_SEED,BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
     error::BankAppError,
     state::{BankInfo, UserReserve,SolReserve},
-    transfer_helper::sol_transfer_from_user,
+    transfer_helper::{sol_transfer_from_user,cpi_staking_interaction}
 };
 
 use staking_app::{
@@ -46,6 +46,9 @@ pub struct Deposit<'info> {
         space = 8 + std::mem::size_of::<UserReserve>(),
     )]
     pub user_reserve: Box<Account<'info, UserReserve>>,
+    ///CHECK:
+    #[account(mut)]
+    pub staking_vault: UncheckedAccount<'info>,
     pub staking_program: Program<'info,StakingApp>,
     #[account(
         seeds = [USER_INFO, bank_vault.key().as_ref()],
@@ -56,6 +59,8 @@ pub struct Deposit<'info> {
 
     #[account(mut)]
     pub user: Signer<'info>,
+    #[account(mut, address = bank_info.authority)]
+    pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -68,29 +73,58 @@ impl<'info> Deposit<'info> {
         let user_reserve = &mut ctx.accounts.user_reserve;
         let staking_info=&ctx.accounts.staking_info;
         let token_share = &mut ctx.accounts.sol_reserve.token_share;
-
+        let pda_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[ctx.accounts.bank_info.bump]]];
         let new_share= if (*token_share)==0 {
             deposit_amount
         }
         else {
-            let current_time: u64 = Clock::get()?.unix_timestamp.try_into().unwrap();
-            let pass_time = if staking_info.last_update_time == 0 {
-                0
-            } else {
-                current_time - staking_info.last_update_time
-            };
-            let lai = staking_info.amount * STAKING_APR * pass_time / 100 / SECOND_PER_YEAR;
+            
             let rent = Rent::get()?;
-            let total_asset=staking_info.amount+ctx.accounts.bank_vault.lamports()-rent.minimum_balance(0)+lai;
-            (*token_share)*deposit_amount/total_asset
+            let max_invest = ctx.accounts.bank_vault.lamports()
+                .checked_sub(rent.minimum_balance(0))
+                .unwrap_or(0);
+            cpi_staking_interaction(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),  
+                ctx.accounts.staking_info.to_account_info(),      
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(),     
+                ctx.accounts.system_program.to_account_info(),
+                max_invest,
+                true,
+                pda_seeds
+            )?;
+
+            let total_asset=staking_info.amount;
+            let result_u128 = (*token_share as u128)
+                .checked_mul(deposit_amount as u128)
+                .ok_or(BankAppError::ErrorMath)? 
+                .checked_div(total_asset as u128)
+                .ok_or(BankAppError::DivideByZero)?;
+            u64::try_from(result_u128).map_err(|_| BankAppError::ErrorMath)?
         };
-        (*token_share)+=new_share;
-        user_reserve.deposited_amount+=new_share;
+        *token_share = token_share
+            .checked_add(new_share)
+            .ok_or(BankAppError::ErrorMath)?;
+        user_reserve.token_share = user_reserve.token_share
+            .checked_add(new_share)
+            .ok_or(BankAppError::ErrorMath)?;
         sol_transfer_from_user(
             &ctx.accounts.user,
             ctx.accounts.bank_vault.to_account_info(),
             &ctx.accounts.system_program,
             deposit_amount,
+        )?;
+        cpi_staking_interaction(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),  
+                ctx.accounts.staking_info.to_account_info(),      
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(),     
+                ctx.accounts.system_program.to_account_info(),
+                deposit_amount,
+                true,
+                pda_seeds
         )?;
 
         Ok(())

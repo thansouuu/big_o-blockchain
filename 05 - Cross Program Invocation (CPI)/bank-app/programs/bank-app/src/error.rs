@@ -6,4 +6,10 @@ pub enum BankAppError {
     BankAppPaused,
     #[msg("Không đủ số dư thực hiện giao dịch!")]
     Overflow,
+    #[msg("Toán học: Xảy ra tràn số (ErrorMath)!")]
+    ErrorMath,
+    #[msg("Toán học: Lỗi chia cho 0!")]
+    DivideByZero,
+    #[msg("Toán học: Xảy ra tràn số âm (Underflow)!")]
+    Underflow,
 }

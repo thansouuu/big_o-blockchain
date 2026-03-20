@@ -102,6 +102,8 @@ pub struct WithdrawToken<'info>{
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub associated_token_program: Program<'info, AssociatedToken>,
+    #[account(mut, address = bank_info.authority)]
+    pub authority: Signer<'info>,
 }
 
 impl<'info> WithdrawToken<'info>{
@@ -114,28 +116,36 @@ impl<'info> WithdrawToken<'info>{
         
         let token_reserve = &mut ctx.accounts.token_reserve;
         let staking_info = &mut ctx.accounts.staking_info;
-        let current_time: u64 = Clock::get()?.unix_timestamp.try_into().unwrap();
-        let pass_time = if staking_info.last_update_time == 0 {
-            0
-        } else {
-            current_time - staking_info.last_update_time
-        };
         
-        let lai = staking_info.amount * STAKING_APR * pass_time / 100 / SECOND_PER_YEAR;
-        let total_asset= ctx.accounts.bank_ata.amount+staking_info.amount+lai;
+        let bank_amount= ctx.accounts.bank_ata.amount;
+        cpi_staking_interaction_token(
+            ctx.accounts.staking_program.to_account_info(),
+            ctx.accounts.staking_vault.to_account_info(),
+            ctx.accounts.token_mint.to_account_info(),
+            ctx.accounts.bank_ata.to_account_info(),
+            ctx.accounts.staking_ata.to_account_info(),
+            
+            ctx.accounts.staking_info.to_account_info(),
+            ctx.accounts.bank_vault.to_account_info(),
+            ctx.accounts.authority.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.associated_token_program.to_account_info(),
+            bank_amount,
+            true, 
+            pda_seeds
+        )?;
+        let total_asset=ctx.accounts.staking_info.amount;
         
-        require!(
-            (user_reserve.deposited_amount as u128) * (total_asset as u128) >= (amount as u128) * (token_reserve.token_share as u128),
-            BankAppError::Overflow
-        );
+        let left_side = (user_reserve.token_share as u128)
+            .checked_mul(total_asset as u128)
+            .ok_or(BankAppError::Overflow)?;
 
+        let right_side = (amount as u128)
+            .checked_mul(token_reserve.token_share as u128)
+            .ok_or(BankAppError::Overflow)?;
 
-        let delta = if amount>ctx.accounts.bank_ata.amount {
-            amount-ctx.accounts.bank_ata.amount
-        }
-        else {
-            0
-        };
+        require!(left_side >= right_side, BankAppError::Overflow);
 
         cpi_staking_interaction_token(
             ctx.accounts.staking_program.to_account_info(),
@@ -146,12 +156,12 @@ impl<'info> WithdrawToken<'info>{
             
             ctx.accounts.staking_info.to_account_info(),
             ctx.accounts.bank_vault.to_account_info(),
-            ctx.accounts.user.to_account_info(), // Payer
+            ctx.accounts.authority.to_account_info(),
             ctx.accounts.token_program.to_account_info(),
             ctx.accounts.system_program.to_account_info(),
             ctx.accounts.associated_token_program.to_account_info(),
-            delta,
-            false, // Rút về
+            amount,
+            false, 
             pda_seeds
         )?;
 
@@ -163,9 +173,19 @@ impl<'info> WithdrawToken<'info>{
             pda_seeds,
             amount,
         )?;
-        let new_share=token_reserve.token_share*amount/total_asset;
-        user_reserve.deposited_amount-=new_share;
-        token_reserve.token_share-=new_share;
+        let new_share_u128 = (token_reserve.token_share as u128)
+            .checked_mul(amount as u128)
+            .ok_or(BankAppError::ErrorMath)? 
+            .checked_div(total_asset as u128)
+            .ok_or(BankAppError::DivideByZero)?;
+        let new_share = u64::try_from(new_share_u128)
+            .map_err(|_| BankAppError::ErrorMath)?;
+        user_reserve.token_share = user_reserve.token_share
+            .checked_sub(new_share)
+            .ok_or(BankAppError::Underflow)?;
+        token_reserve.token_share = token_reserve.token_share
+            .checked_sub(new_share)
+            .ok_or(BankAppError::Underflow)?;
         Ok(())
     }
 }

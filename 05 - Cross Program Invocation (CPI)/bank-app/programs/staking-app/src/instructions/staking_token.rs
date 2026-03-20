@@ -67,10 +67,28 @@ impl<'info> StakeToken<'info>{
             //just initialized
             0
         } else {
-            current_time - user_info.last_update_time
+            current_time
+                .checked_sub(user_info.last_update_time)
+                .unwrap_or(0)
         };
 
-        user_info.amount += user_info.amount * STAKING_APR * pass_time / 100 / SECOND_PER_YEAR;
+         let reward_u128 = (user_info.amount as u128)
+            .checked_mul(STAKING_APR as u128)
+            .ok_or(StakingAppError::ErrorMath)?
+            .checked_mul(pass_time as u128)
+            .ok_or(StakingAppError::ErrorMath)?
+            .checked_div(100)
+            .ok_or(StakingAppError::DivideByZero)?
+            .checked_div(SECOND_PER_YEAR as u128)
+            .ok_or(StakingAppError::DivideByZero)?;
+
+        let reward = u64::try_from(reward_u128)
+            .map_err(|_| StakingAppError::Overflow)?;
+        user_info.amount = user_info.amount
+            .checked_add(reward)
+            .ok_or(StakingAppError::Overflow)?;
+        user_info.last_update_time = current_time;
+
         user_info.last_update_time = current_time;
 
         if amount != 0 {
@@ -82,7 +100,9 @@ impl<'info> StakeToken<'info>{
                     &ctx.accounts.token_program, 
                     amount
                 )?;
-                user_info.amount+=amount;
+                user_info.amount = user_info.amount
+                    .checked_add(amount)
+                    .ok_or(StakingAppError::ErrorMath)?;
             }
             else {
                 let pda_seeds: &[&[&[u8]]] = &[&[STAKING_VAULT, &[ctx.bumps.staking_vault]]];
@@ -98,7 +118,9 @@ impl<'info> StakeToken<'info>{
                     amount, 
                     pda_seeds
                 )?;
-                user_info.amount-=amount;
+                user_info.amount = user_info.amount
+                    .checked_sub(amount)
+                    .ok_or(StakingAppError::Underflow)?;
             }
         }
         Ok(())
