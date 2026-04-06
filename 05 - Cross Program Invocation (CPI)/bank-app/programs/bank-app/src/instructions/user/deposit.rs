@@ -51,6 +51,7 @@ pub struct Deposit<'info> {
     pub staking_vault: UncheckedAccount<'info>,
     pub staking_program: Program<'info,StakingApp>,
     #[account(
+        mut, 
         seeds = [USER_INFO, bank_vault.key().as_ref()],
         bump,
         seeds::program = staking_program.key(),
@@ -71,18 +72,13 @@ impl<'info> Deposit<'info> {
         }
 
         let user_reserve = &mut ctx.accounts.user_reserve;
-        let staking_info=&ctx.accounts.staking_info;
         let token_share = &mut ctx.accounts.sol_reserve.token_share;
         let pda_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[ctx.accounts.bank_info.bump]]];
-        let new_share= if (*token_share)==0 {
+
+        let new_share = if *token_share == 0 {
             deposit_amount
-        }
-        else {
-            
-            let rent = Rent::get()?;
-            let max_invest = ctx.accounts.bank_vault.lamports()
-                .checked_sub(rent.minimum_balance(0))
-                .unwrap_or(0);
+        } else {
+            // LẦN 1: PING ĐỂ ĐỒNG BỘ LÃI SUẤT
             cpi_staking_interaction(
                 ctx.accounts.staking_program.to_account_info(),
                 ctx.accounts.staking_vault.to_account_info(),  
@@ -90,41 +86,54 @@ impl<'info> Deposit<'info> {
                 ctx.accounts.bank_vault.to_account_info(),
                 ctx.accounts.authority.to_account_info(),     
                 ctx.accounts.system_program.to_account_info(),
-                max_invest,
+                0, // <--- SỬA: Truyền 0 để chỉ đồng bộ lãi, không rút lõi quỹ SOL
                 true,
                 pda_seeds
             )?;
 
-            let total_asset=staking_info.amount;
-            let result_u128 = (*token_share as u128)
-                .checked_mul(deposit_amount as u128)
-                .ok_or(BankAppError::ErrorMath)? 
-                .checked_div(total_asset as u128)
-                .ok_or(BankAppError::DivideByZero)?;
-            u64::try_from(result_u128).map_err(|_| BankAppError::ErrorMath)?
+            // SỬA: Ép tải lại dữ liệu vào RAM
+            ctx.accounts.staking_info.reload()?;
+            
+            let total_asset = ctx.accounts.staking_info.amount;
+            
+            // SỬA: Bắt ngoại lệ nếu két trống
+            if total_asset == 0 {
+                deposit_amount
+            } else {
+                let result_u128 = (*token_share as u128)
+                    .checked_mul(deposit_amount as u128)
+                    .ok_or(BankAppError::ErrorMath)? 
+                    .checked_div(total_asset as u128)
+                    .ok_or(BankAppError::DivideByZero)?;
+                u64::try_from(result_u128).map_err(|_| BankAppError::ErrorMath)?
+            }
         };
+
         *token_share = token_share
             .checked_add(new_share)
             .ok_or(BankAppError::ErrorMath)?;
         user_reserve.token_share = user_reserve.token_share
             .checked_add(new_share)
             .ok_or(BankAppError::ErrorMath)?;
+
         sol_transfer_from_user(
             &ctx.accounts.user,
             ctx.accounts.bank_vault.to_account_info(),
             &ctx.accounts.system_program,
             deposit_amount,
         )?;
+
+        // LẦN 2: MANG TIỀN VỪA THU ĐI AUTO-STAKE
         cpi_staking_interaction(
-                ctx.accounts.staking_program.to_account_info(),
-                ctx.accounts.staking_vault.to_account_info(),  
-                ctx.accounts.staking_info.to_account_info(),      
-                ctx.accounts.bank_vault.to_account_info(),
-                ctx.accounts.authority.to_account_info(),     
-                ctx.accounts.system_program.to_account_info(),
-                deposit_amount,
-                true,
-                pda_seeds
+            ctx.accounts.staking_program.to_account_info(),
+            ctx.accounts.staking_vault.to_account_info(),  
+            ctx.accounts.staking_info.to_account_info(),      
+            ctx.accounts.bank_vault.to_account_info(),
+            ctx.accounts.authority.to_account_info(),     
+            ctx.accounts.system_program.to_account_info(),
+            deposit_amount, // <--- Truyền đúng tiền gửi vào
+            true,
+            pda_seeds
         )?;
 
         Ok(())

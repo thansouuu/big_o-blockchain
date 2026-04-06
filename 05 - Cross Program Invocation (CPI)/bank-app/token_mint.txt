@@ -3,3 +3,10 @@ Address:  3cYRG1gzC93CiPQ2ZB1FyEpy11NoX8N9AGxqqQVAg4Fj
 Decimals:  9
 Creating account QeBAm2pxTLS5acKPq5st9tR7XmU6ihVj7SimkggoWxZ
 Recipient: QeBAm2pxTLS5acKPq5st9tR7XmU6ihVj7SimkggoWxZ
+
+
+Creating token 9db4VTqEdFG8gAvXB39XwRpukkKez2yASvf65vtXxSH6 under program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+Address:  9db4VTqEdFG8gAvXB39XwRpukkKez2yASvf65vtXxSH6
+Decimals:  9
+Creating account GR5itigMnNRJB8DSHb4dWnrQSqPFZYNmMV48L6x2CSyu
+Recipient: GR5itigMnNRJB8DSHb4dWnrQSqPFZYNmMV48L6x2CSyu

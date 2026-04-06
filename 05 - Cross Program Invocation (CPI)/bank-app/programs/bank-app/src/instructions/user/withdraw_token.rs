@@ -107,36 +107,39 @@ pub struct WithdrawToken<'info>{
 }
 
 impl<'info> WithdrawToken<'info>{
-    pub fn process(ctx:Context<WithdrawToken>,amount:u64)->Result<()>{
+    pub fn process(ctx:Context<WithdrawToken>, amount:u64)->Result<()>{
         if ctx.accounts.bank_info.is_paused {
             return Err(BankAppError::BankAppPaused.into());
         }
         let pda_seeds:&[&[&[u8]]]=&[&[BANK_VAULT_SEED,&[ctx.accounts.bank_info.bump]]];
         let user_reserve=&mut ctx.accounts.user_reserve;
-        
         let token_reserve = &mut ctx.accounts.token_reserve;
         let staking_info = &mut ctx.accounts.staking_info;
         
-        let bank_amount= ctx.accounts.bank_ata.amount;
+        // LẦN 1: PING ĐỂ CHỐT LÃI SUẤT MỚI NHẤT
         cpi_staking_interaction_token(
             ctx.accounts.staking_program.to_account_info(),
             ctx.accounts.staking_vault.to_account_info(),
             ctx.accounts.token_mint.to_account_info(),
             ctx.accounts.bank_ata.to_account_info(),
             ctx.accounts.staking_ata.to_account_info(),
-            
             ctx.accounts.staking_info.to_account_info(),
             ctx.accounts.bank_vault.to_account_info(),
             ctx.accounts.authority.to_account_info(),
             ctx.accounts.token_program.to_account_info(),
             ctx.accounts.system_program.to_account_info(),
             ctx.accounts.associated_token_program.to_account_info(),
-            bank_amount,
+            0, // <--- SỬA 1: Truyền 0 để Ping lấy lãi, không truyền bank_amount
             true, 
             pda_seeds
         )?;
-        let total_asset=ctx.accounts.staking_info.amount;
+
+        // <--- SỬA 2: BẮT BUỘC RELOAD ĐỂ LẤY SỐ DƯ ĐÃ CỘNG LÃI
+        ctx.accounts.staking_info.reload()?;
         
+        let total_asset = ctx.accounts.staking_info.amount;
+        
+        // Kiểm tra số dư Share của User có đủ để rút không
         let left_side = (user_reserve.token_share as u128)
             .checked_mul(total_asset as u128)
             .ok_or(BankAppError::Overflow)?;
@@ -147,24 +150,25 @@ impl<'info> WithdrawToken<'info>{
 
         require!(left_side >= right_side, BankAppError::Overflow);
 
+        // LẦN 2: BÁO STAKING APP XÌ TIỀN RA TRẢ BANK
         cpi_staking_interaction_token(
             ctx.accounts.staking_program.to_account_info(),
             ctx.accounts.staking_vault.to_account_info(),
             ctx.accounts.token_mint.to_account_info(),
             ctx.accounts.bank_ata.to_account_info(),
             ctx.accounts.staking_ata.to_account_info(),
-            
             ctx.accounts.staking_info.to_account_info(),
             ctx.accounts.bank_vault.to_account_info(),
             ctx.accounts.authority.to_account_info(),
             ctx.accounts.token_program.to_account_info(),
             ctx.accounts.system_program.to_account_info(),
             ctx.accounts.associated_token_program.to_account_info(),
-            amount,
-            false, 
+            amount, // <--- Xin rút đúng số tiền user yêu cầu
+            false,  // <--- is_stake = false (Rút tiền)
             pda_seeds
         )?;
 
+        // Bank trả tiền về ví User
         token_transfer_from_pda(
             ctx.accounts.bank_ata.to_account_info(),
             ctx.accounts.bank_vault.to_account_info(),
@@ -173,19 +177,30 @@ impl<'info> WithdrawToken<'info>{
             pda_seeds,
             amount,
         )?;
-        let new_share_u128 = (token_reserve.token_share as u128)
-            .checked_mul(amount as u128)
-            .ok_or(BankAppError::ErrorMath)? 
-            .checked_div(total_asset as u128)
-            .ok_or(BankAppError::DivideByZero)?;
+
+        // Tính toán số Share cần trừ đi
+        // <--- SỬA 3: Thêm bọc an toàn nếu total_asset = 0
+        let new_share_u128 = if total_asset == 0 {
+            0
+        } else {
+            (token_reserve.token_share as u128)
+                .checked_mul(amount as u128)
+                .ok_or(BankAppError::ErrorMath)? 
+                .checked_div(total_asset as u128)
+                .ok_or(BankAppError::DivideByZero)?
+        };
+            
         let new_share = u64::try_from(new_share_u128)
             .map_err(|_| BankAppError::ErrorMath)?;
+            
         user_reserve.token_share = user_reserve.token_share
             .checked_sub(new_share)
             .ok_or(BankAppError::Underflow)?;
         token_reserve.token_share = token_reserve.token_share
             .checked_sub(new_share)
             .ok_or(BankAppError::Underflow)?;
+            
         Ok(())
     }
 }
+   
