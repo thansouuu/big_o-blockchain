@@ -1,12 +1,19 @@
 import * as anchor from "@coral-xyz/anchor";
+import { Program } from "@coral-xyz/anchor";
 import { expect } from "chai";
-import { SYSVAR_INSTRUCTIONS_PUBKEY } from "@solana/web3.js";
+import { 
+  PublicKey, 
+  Transaction, 
+  Keypair,
+  LAMPORTS_PER_SOL 
+} from "@solana/web3.js";
+import { Exercise } from "../target/types/exercise";
 
 describe("exercise", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.Exercise;
+  const program = anchor.workspace.Exercise as Program<Exercise>;
 
   // ---------------- Part 1: Instruction Ordering ----------------
 
@@ -14,81 +21,125 @@ describe("exercise", () => {
     try {
       await program.methods
         .execute(new anchor.BN(1000))
-        .accounts({
-          authority: provider.wallet.publicKey,
-          instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-        })
+        .accounts({ authority: provider.wallet.publicKey }) // ixSysvar tự động điền
         .rpc();
-
       expect.fail("Should have failed");
     } catch (err: any) {
-      // TODO: Verify it failed with your custom error
-      expect(err.message).to.include("MustApproveFirst");
+      expect(err.message).to.include("MissingPreviousInstruction");
     }
   });
 
   it("succeeds with approval in same transaction", async () => {
-    // TODO:
-    // - Create approve instruction:
-    //     const approveIx = await program.methods
-    //       .approve()
-    //       .accounts({ authority: provider.wallet.publicKey })
-    //       .instruction();
-    //
-    // - Create execute instruction:
-    //     const executeIx = await program.methods
-    //       .execute(new anchor.BN(1000))
-    //       .accounts({
-    //         authority: provider.wallet.publicKey,
-    //         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-    //       })
-    //       .instruction();
-    //
-    // - Combine them in a single transaction in the correct order:
-    //     const tx = new anchor.web3.Transaction().add(approveIx).add(executeIx);
-    //     await provider.sendAndConfirm(tx);
+    const approveIx = await program.methods
+      .approve()
+      .accounts({ authority: provider.wallet.publicKey })
+      .instruction();
+
+    const executeIx = await program.methods
+      .execute(new anchor.BN(1000))
+      .accounts({ authority: provider.wallet.publicKey })
+      .instruction();
+
+    const tx = new Transaction().add(approveIx).add(executeIx);
+    await provider.sendAndConfirm(tx);
   });
 
   it("fails with wrong order (execute before approve)", async () => {
-    // TODO:
-    // - Build execute instruction first, then approve instruction
-    // - Add them to a Transaction in the wrong order
-    // - Send the transaction and assert that it fails with MustApproveFirst
+    const approveIx = await program.methods
+      .approve()
+      .accounts({ authority: provider.wallet.publicKey })
+      .instruction();
+
+    const executeIx = await program.methods
+      .execute(new anchor.BN(1000))
+      .accounts({ authority: provider.wallet.publicKey })
+      .instruction();
+
+    // Thêm sai thứ tự: execute trước, approve sau
+    const tx = new Transaction().add(executeIx).add(approveIx);
+
+    try {
+      await provider.sendAndConfirm(tx);
+      expect.fail("Should have failed");
+    } catch (err: any) {
+      // Vì execute chạy đầu tiên, nó sẽ thấy index = 0 và báo lỗi MissingPreviousInstruction
+      expect(err.message).to.include("MissingPreviousInstruction");
+    }
   });
 
   // ---------------- Part 2: Regular Account<T> vs Zero-Copy ----------------
 
-  it("initializes and uses large approval data with regular Account<T>", async () => {
-    // TODO:
-    // - Derive a PDA for the "regular" account:
-    //     const [regularPda] = PublicKey.findProgramAddressSync(
-    //       [Buffer.from("approval_regular"), provider.wallet.publicKey.toBuffer()],
-    //       program.programId
-    //     );
-    //
-    // - Call `initializeLargeApprovalRegular` with that PDA.
-    // - Then call `processLargeApprovalRegular` to write a timestamp.
-    // - Fetch the account with `getAccountInfo` and assert that:
-    //     * accountInfo is not null
-    //     * data length is > 8 (so you know it's storing something non-trivial)
+  it("initializes and uses regular large approval data", async () => {
+    await program.methods
+      .initializeLargeApprovalRegular()
+      .accounts({ authority: provider.wallet.publicKey }) // PDA và SystemProgram tự điền
+      .rpc();
+
+    await program.methods
+      .processLargeApprovalRegular()
+      .accounts({ authority: provider.wallet.publicKey })
+      .rpc();
+
+    const [regularPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("approval_regular"), provider.wallet.publicKey.toBuffer()],
+      program.programId
+    );
+    const info = await provider.connection.getAccountInfo(regularPda);
+    expect(info!.data.length).to.equal(8 + 32 + (128 * 8));
   });
 
-  it("initializes and uses large approval data with zero-copy AccountLoader<T>", async () => {
-    // TODO:
-    // - Derive a PDA for the zero-copy account:
-    //     const [zcPda] = PublicKey.findProgramAddressSync(
-    //       [Buffer.from("approval_zero_copy"), provider.wallet.publicKey.toBuffer()],
-    //       program.programId
-    //     );
-    //
-    // - Call `initializeLargeApprovalZeroCopy` with that PDA.
-    // - Then call `processLargeApprovalZeroCopy`.
-    // - Fetch the account with `getAccountInfo` and assert that:
-    //     * accountInfo is not null
-    //     * data length is large (e.g. > 4096) since it holds 512 u64 values.
-    //
-    // Discussion prompt for students:
-    // - What happens if you try to make the "regular" account as large as the zero-copy one?
-    // - When/why does the BPF stack limit become a problem?
+  it("initializes and uses zero-copy large approval data", async () => {
+    await program.methods
+      .initializeLargeApprovalZeroCopy()
+      .accounts({ authority: provider.wallet.publicKey })
+      .rpc();
+
+    await program.methods
+      .processLargeApprovalZeroCopy()
+      .accounts({ authority: provider.wallet.publicKey })
+      .rpc();
+
+    const [zcPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("approval_zero_copy"), provider.wallet.publicKey.toBuffer()],
+      program.programId
+    );
+    const info = await provider.connection.getAccountInfo(zcPda);
+    expect(info!.data.length).to.be.greaterThan(4000);
+  });
+
+  // ---------------- Part 3: Multi-Send (Remaining Accounts) ----------------
+
+  it("successfully performs multi_send to 3 recipients", async () => {
+    const r1 = Keypair.generate().publicKey;
+    const r2 = Keypair.generate().publicKey;
+    const r3 = Keypair.generate().publicKey;
+
+    const amount = new anchor.BN(0.01 * LAMPORTS_PER_SOL);
+
+    await program.methods
+      .multiSend(amount)
+      .accounts({ sender: provider.wallet.publicKey }) // SystemProgram tự điền
+      .remainingAccounts([
+        { pubkey: r1, isWritable: true, isSigner: false },
+        { pubkey: r2, isWritable: true, isSigner: false },
+        { pubkey: r3, isWritable: true, isSigner: false },
+      ])
+      .rpc();
+
+    const balance = await provider.connection.getBalance(r3);
+    expect(balance).to.equal(amount.toNumber());
+  });
+
+  it("fails multi_send if no recipients provided", async () => {
+    try {
+      await program.methods
+        .multiSend(new anchor.BN(1000))
+        .accounts({ sender: provider.wallet.publicKey })
+        .remainingAccounts([]) // Danh sách trống
+        .rpc();
+      expect.fail("Should have failed");
+    } catch (err: any) {
+      expect(err.message).to.include("NoRecipients");
+    }
   });
 });

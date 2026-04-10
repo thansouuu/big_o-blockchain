@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-instruction_ordering = "JWpfuQSgQhZg4Zg7vHKUUuCaYPJuX2i2FUTR25TqUUX"
+instruction_ordering = "21eDSgbyJEwGJFCeckG9wGjtqYLTmupoC8ces7yDG4fx"
 
 [registry]
 url = "https://api.apr.dev"
