@@ -142,4 +142,42 @@ describe("exercise", () => {
       expect(err.message).to.include("NoRecipients");
     }
   });
+  it("fails multi_send if a recipient is not writable", async () => {
+    const recipient = Keypair.generate().publicKey;
+    const amount = new anchor.BN(1000);
+    try {
+      await program.methods
+        .multiSend(amount)
+        .accounts({ sender: provider.wallet.publicKey })
+        .remainingAccounts([
+          { pubkey: recipient, isWritable: false, isSigner: false },
+        ])
+        .rpc();
+      
+      expect.fail("Should have failed because recipient is not writable");
+    } catch (err: any) {
+      expect(err.message).to.include("NotWritable");
+    }
+  });
+
+  it("fails multi_send if there are too many recipients (> 10)", async () => {
+    const amount = new anchor.BN(1000);
+    const tooManyRecipients = Array.from({ length: 11 }, () => ({
+      pubkey: Keypair.generate().publicKey,
+      isWritable: true,
+      isSigner: false,
+    }));
+
+    try {
+      await program.methods
+        .multiSend(amount)
+        .accounts({ sender: provider.wallet.publicKey })
+        .remainingAccounts(tooManyRecipients)
+        .rpc();
+      
+      expect.fail("Should have failed due to too many recipients");
+    } catch (err: any) {
+      expect(err.message).to.include("TooManyRecipients");
+    }
+  });
 });
