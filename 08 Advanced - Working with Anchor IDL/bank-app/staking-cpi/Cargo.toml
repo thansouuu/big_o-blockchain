@@ -1,0 +1,11 @@
+[package]
+name = "staking-cpi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anchor-gen = "0.4.1"
+anchor-lang = "0.31.1"
+[features]
+cpi = ["no-entrypoint"]
+no-entrypoint = []

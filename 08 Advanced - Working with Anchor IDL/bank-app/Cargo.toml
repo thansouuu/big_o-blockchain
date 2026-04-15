@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = [
-    "programs/*"
+members = [ 
+    "programs/*",
+    "staking-cpi"
 ]
-
 [profile.release]
 overflow-checks = true
 lto = "fat"

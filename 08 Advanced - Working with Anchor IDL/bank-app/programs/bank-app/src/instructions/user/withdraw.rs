@@ -1,11 +1,17 @@
 use anchor_lang::{prelude::*, system_program};
-
+use staking_app::transfer_helper::sol_transfer_from_pda;
 use crate::{
-    constant::{BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
+    constant::{BANK_TOKEN_SEED,BANK_INFO_SEED, BANK_VAULT_SEED, USER_RESERVE_SEED},
     error::BankAppError,
-    state::{BankInfo, UserReserve},
+    state::{BankInfo, UserReserve,SolReserve},
+    transfer_helper::cpi_staking_interaction,
 };
 
+use staking_app::{
+    constant::{USER_INFO,STAKING_APR,SECOND_PER_YEAR},
+    state::{UserInfo},
+};
+use staking_app::{cpi, program::StakingApp};
 #[derive(Accounts)]
 pub struct Withdraw<'info> {
     #[account(
@@ -14,7 +20,15 @@ pub struct Withdraw<'info> {
         bump
     )]
     pub bank_info: Box<Account<'info, BankInfo>>,
-
+    #[account(
+        mut,
+        seeds = [
+            BANK_TOKEN_SEED,
+            bank_vault.key().as_ref(),
+        ],
+        bump,
+    )]
+    pub sol_reserve: Box<Account<'info, SolReserve>>,
     ///CHECK:
     #[account(
         mut,
@@ -23,16 +37,29 @@ pub struct Withdraw<'info> {
         owner = system_program::ID
     )]
     pub bank_vault: UncheckedAccount<'info>,
-
     #[account(
         mut,
+        seeds = [USER_INFO, bank_vault.key().as_ref()], 
+        bump,
+        seeds::program = staking_program.key()
+    )]
+    pub staking_info: Box<Account<'info, UserInfo>>,
+
+    #[account(
+        mut, 
         seeds = [USER_RESERVE_SEED, user.key().as_ref()],
         bump,
     )]
     pub user_reserve: Box<Account<'info, UserReserve>>,
+    ///CHECK:
+    #[account(mut)]
+    pub staking_vault: UncheckedAccount<'info>,
+    pub staking_program: Program<'info, StakingApp>,
 
     #[account(mut)]
     pub user: Signer<'info>,
+    #[account(mut, address = bank_info.authority)]
+    pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -41,10 +68,82 @@ impl<'info> Withdraw<'info> {
         if ctx.accounts.bank_info.is_paused {
             return Err(BankAppError::BankAppPaused.into());
         }
-
+        let user_reserve = &mut ctx.accounts.user_reserve;
+        let token_share = &mut ctx.accounts.sol_reserve.token_share;
         let pda_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[ctx.accounts.bank_info.bump]]];
-        // Your code here
 
+        // LẦN 1: PING ĐỂ CHỐT LÃI SUẤT
+        cpi_staking_interaction(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),  
+                ctx.accounts.staking_info.to_account_info(),      
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(),     
+                ctx.accounts.system_program.to_account_info(),
+                0, // <--- SỬA 1: Truyền 0 để Ping lấy lãi
+                true,
+                pda_seeds
+        )?;    
+
+        // <--- SỬA 2: BẮT BUỘC RELOAD
+        ctx.accounts.staking_info.reload()?;
+        
+        let total_asset = ctx.accounts.staking_info.amount;
+
+        let left_side = (user_reserve.token_share as u128)
+            .checked_mul(total_asset as u128)
+            .ok_or(BankAppError::Overflow)?;
+
+        let right_side = (withdraw_amount as u128)
+            .checked_mul(*token_share as u128)
+            .ok_or(BankAppError::Overflow)?;
+
+        require!(left_side >= right_side, BankAppError::Overflow);
+        
+        // LẦN 2: BÁO STAKING APP XÌ TIỀN RA
+        cpi_staking_interaction(
+                ctx.accounts.staking_program.to_account_info(),
+                ctx.accounts.staking_vault.to_account_info(),  
+                ctx.accounts.staking_info.to_account_info(),      
+                ctx.accounts.bank_vault.to_account_info(),
+                ctx.accounts.authority.to_account_info(),     
+                ctx.accounts.system_program.to_account_info(),
+                withdraw_amount, // <--- Rút đúng số tiền yêu cầu
+                false, // <--- is_stake = false
+                pda_seeds
+        )?; 
+        
+        // Trả tiền cho User
+        sol_transfer_from_pda(
+            ctx.accounts.bank_vault.to_account_info(),
+            ctx.accounts.user.to_account_info(),
+            &ctx.accounts.system_program,
+            pda_seeds,
+            withdraw_amount
+        )?;
+
+        // Tính toán số Share cần trừ
+        // <--- SỬA 3: An toàn Divide By Zero
+        let new_share_u128 = if total_asset == 0 {
+            0
+        } else {
+            (*token_share as u128)
+                .checked_mul(withdraw_amount as u128)
+                .ok_or(BankAppError::ErrorMath)? 
+                .checked_div(total_asset as u128)
+                .ok_or(BankAppError::DivideByZero)?
+        };
+            
+        let new_share = u64::try_from(new_share_u128)
+            .map_err(|_| BankAppError::ErrorMath)?;
+            
+        user_reserve.token_share = user_reserve.token_share
+            .checked_sub(new_share)
+            .ok_or(BankAppError::Underflow)?;
+        *token_share = (*token_share)
+            .checked_sub(new_share)
+            .ok_or(BankAppError::Underflow)?;
+            
         Ok(())
     }
 }

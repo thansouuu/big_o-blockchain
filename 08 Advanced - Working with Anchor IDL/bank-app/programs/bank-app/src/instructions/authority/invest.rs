@@ -4,6 +4,7 @@ use crate::{
     constant::{BANK_INFO_SEED, BANK_VAULT_SEED},
     error::BankAppError,
     state::BankInfo,
+    transfer_helper::cpi_staking_interaction,
 };
 use staking_app::{cpi, program::StakingApp};
 
@@ -43,22 +44,20 @@ impl<'info> Invest<'info> {
             return Err(BankAppError::BankAppPaused.into());
         }
 
-        let invest_vault_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[ctx.accounts.bank_info.bump]]];
+        let bank_info_bump = ctx.accounts.bank_info.bump;
+        let pda_seeds: &[&[&[u8]]] = &[&[BANK_VAULT_SEED, &[bank_info_bump]]];
 
-        cpi::stake(
-            CpiContext::new_with_signer(
-                ctx.accounts.staking_program.to_account_info(),
-                cpi::accounts::Stake {
-                    staking_vault: ctx.accounts.staking_vault.to_account_info(),
-                    user_info: ctx.accounts.staking_info.to_account_info(),
-                    user: ctx.accounts.bank_vault.to_account_info(),
-                    payer: ctx.accounts.authority.to_account_info(),
-                    system_program: ctx.accounts.system_program.to_account_info(),
-                },
-                invest_vault_seeds,
-            ),
+
+        cpi_staking_interaction(
+            ctx.accounts.staking_program.to_account_info(),
+            ctx.accounts.staking_vault.to_account_info(),
+            ctx.accounts.staking_info.to_account_info(),
+            ctx.accounts.bank_vault.to_account_info(),
+            ctx.accounts.authority.to_account_info(), // Admin trả phí
+            ctx.accounts.system_program.to_account_info(),
             amount,
-            is_stake,
+            is_stake, 
+            pda_seeds
         )?;
 
         Ok(())

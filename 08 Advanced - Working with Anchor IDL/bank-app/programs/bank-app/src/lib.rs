@@ -8,7 +8,7 @@ pub mod transfer_helper;
 
 use instructions::*;
 
-declare_id!("3q57ftWH75aKfxoNnV6Lu1n8LhV73xxKHAxPapL6Jvh7");
+declare_id!("BAVmCey5z82YthtpaEm4cfh9vU4KwdRiz2A7tx9oQLKD");
 
 #[program]
 pub mod bank_app {
@@ -18,8 +18,16 @@ pub mod bank_app {
         return Initialize::process(ctx);
     }
 
+    pub fn add_token(ctx:Context<AddToken>)->Result<()>{
+        return AddToken::process(ctx);
+    }
+
     pub fn invest(ctx: Context<Invest>, amount: u64, is_stake: bool) -> Result<()> {
         return Invest::process(ctx, amount, is_stake);
+    }
+
+    pub fn invest_token(ctx:Context<InvestToken>,amount:u64,is_stake:bool)->Result<()>{
+        return InvestToken::process(ctx, amount, is_stake);
     }
 
     pub fn deposit(ctx: Context<Deposit>, deposit_amount: u64) -> Result<()> {
@@ -29,4 +37,16 @@ pub mod bank_app {
     pub fn deposit_token(ctx: Context<DepositToken>, deposit_amount: u64) -> Result<()> {
         return DepositToken::process(ctx, deposit_amount);
     }
+
+    pub fn withdraw(ctx:Context<Withdraw>,withdraw_amount:u64)->Result<()>{
+        return Withdraw::process(ctx, withdraw_amount);
+    }
+
+    pub fn withdraw_token(ctx:Context<WithdrawToken>,amount:u64)->Result<()>{
+        return WithdrawToken::process(ctx, amount);
+    }
+
+    pub fn toggle_pause(ctx: Context<TogglePause>) -> Result<()> {
+        return TogglePause::process(ctx);
+    } 
 }
